@@ -1,68 +1,53 @@
-import pytest
-from playwright.sync_api import sync_playwright
-from time import time, sleep
+import asyncio
+from playwright.async_api import async_playwright
 
-@pytest.fixture(scope="session")
-def browser():
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        yield browser
-        browser.close()
+URL = "https://autoprojekt.simplytest.de/"
 
-def test_shop_flow(browser):
-    page = browser.new_page()
-    page.goto("https://autoprojekt.simplytest.de/")
+async def run_test():
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=False)  # headless=True für unsichtbare Tests
+        page = await browser.new_page()
 
-    # 1. Überschrift prüfen
-    assert "Shop" in page.locator("h1").inner_text()
+        # 1. Shop öffnen
+        await page.goto(URL)
 
-    # 2. Warenkorb prüfen
-    cart_count = page.locator(".cart-contents .count").inner_text()
-    assert "0" in cart_count.lower()
+        # 2. Überschrift prüfen
+        heading = await page.locator("h1").inner_text()
+        assert "Shop" in heading, f"Erwartet: 'Shop' in '{heading}'"
 
-    # 3. Artikel "Album" direkt aus der Produktübersicht hinzufügen
-    page.locator("li.product:has-text('Album') >> text=Add to cart").click()
+        # 3. Warenkorb prüfen (leer)
+        cart_count = await page.locator(".cart-contents .count").inner_text()
+        assert "0" in cart_count.lower(), f"Warenkorb ist nicht leer: {cart_count}"
 
-    # 4. Warten auf Bestätigung
-    page.locator("div.woocommerce-message:has-text('Album')").wait_for()
+        # 4. Artikel "Album" hinzufügen
+        await page.locator("li.product:has-text('Album') >> text=Add to cart").click()
 
-    # 5. "View cart" klicken
-    page.locator("a.added_to_cart").click()
+        # 5. Zum Warenkorb wechseln
+        await page.locator("a.added_to_cart").click()
+        page.wait_for_timeout(500)
 
-    # 6. Warten bis Warenkorb geladen ist
-    page.wait_for_url("**/cart/")
+        # 6. Anzahl auf 2 erhöhen
+        qty_input = page.locator("input.qty").first
+        qty_input.wait_for(state="visible")
 
-    # 7. Menge auf 2 ändern
-    qty_input = page.locator("input.qty").first
-    qty_input.wait_for(state="visible")
-    qty_input.fill("2")
+        #qty_input.fill("1")
+        #qty_input.press("Enter")
+        #page.wait_for_timeout(500)
 
-    # 8. Button "Update cart" finden und aktiv auf Aktivierung warten
-    update_btn = page.locator("button[name='update_cart']")
-    update_btn.wait_for(state="visible")
+        qty_input.fill("2")
+        qty_input.press("Enter")
+        page.wait_for_timeout(500)
 
-    start = time()
-    timeout = 5  # Sekunden warten auf Aktivierung
+        # 7. "Update cart" klicken
+        await page.locator("input[name='update_cart'] >> [type=submit]").click()
 
-    while not update_btn.is_enabled():
-        if time() - start > timeout:
-            # Screenshot zur Diagnose
-            page.screenshot(path="update_cart_disabled.png")
-            print("🔍 Diagnose:")
-            print("Aktuelle URL:", page.url)
-            print("Button enabled:", update_btn.is_enabled())
-            print("Button class:", update_btn.get_attribute("class"))
-            raise AssertionError("🚫 'Update cart' bleibt deaktiviert, obwohl Menge geändert wurde!")
-        sleep(0.2)
+        # 8. Gesamtpreis überprüfen
+        await page.wait_for_timeout(1000)  # kleine Wartezeit für Aktualisierung
+        total = await page.locator("td.product-subtotal > span.woocommerce-Price-amount").inner_text()
+        assert "30,00" in total, f"Erwarteter Preis 30,00 €, gefunden: {total}"
 
-    # 9. Klicken
-    update_btn.click()
+        print("✅ Test erfolgreich abgeschlossen!")
 
-    # 10. Auf Preisanzeige warten
-    page.wait_for_timeout(1000)
+        await browser.close()
 
-    # 11. Gesamtpreis prüfen
-    total = page.locator("td.product-subtotal > span.woocommerce-Price-amount").inner_text()
-    assert "30,00" in total
-
-    print("✅ Test erfolgreich abgeschlossen!")
+asyncio.run(run_test())
